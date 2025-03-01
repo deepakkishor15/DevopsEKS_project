@@ -19,9 +19,7 @@ pipeline {
                 sh '''
                 set -e
                 python3 -m venv venv
-                source venv/bin/activate
-                pip install -r requirements.txt
-                pytest
+                /bin/bash -c "source venv/bin/activate && pip install -r requirements.txt && pytest"
                 '''
             }
         }
