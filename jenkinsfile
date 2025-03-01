@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         DOCKER_HUB_REPO = "deepak158/flask-app"  // Change to your Docker Hub repo
-        AWS_REGION = "us-east-1"  // Update to your AWS region
+        AWS_REGION = "us-west-2"  // Update to your AWS region
         EKS_CLUSTER_NAME = "your-eks-cluster"  // Update to your EKS cluster name
         NAMESPACE = "flask-app"  // Change if needed
     }
@@ -48,7 +48,7 @@ pipeline {
 
         stage('Deploy to EKS') {
             steps {
-                withAWS(region: "${AWS_REGION}", credentials: 'aws-credentials') {
+                withAWS(region: "${AWS_REGION}", credentials: 'awscredentialsid') {
                     sh """
                     aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
                     sed -i 's|IMAGE_NAME_PLACEHOLDER|${DOCKER_HUB_REPO}:${BUILD_NUMBER}|g' kubernetes/deployment.yaml
