@@ -2,10 +2,10 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_HUB_REPO = "deepak158/flask-app"
-        AWS_REGION = "us-west-2"
-        EKS_CLUSTER_NAME = "sample-EKS"
-        NAMESPACE = "flask-app"
+        DOCKER_HUB_REPO = "deepak158/flask-app"  // Change to your Docker Hub repo
+        AWS_REGION = "us-west-2"  // Update to your AWS region
+        EKS_CLUSTER_NAME = "sample-EKS"  // Updated to match your cluster
+        NAMESPACE = "flask-app"  // Change if needed
     }
 
     stages {
@@ -20,9 +20,7 @@ pipeline {
                 sh '''
                 set -e
                 python3 -m venv venv
-                source venv/bin/activate
-                pip install -r requirements.txt
-                pytest || exit 1
+                /bin/bash -c "source venv/bin/activate && pip install -r requirements.txt && pytest || exit 1"
                 '''
             }
         }
@@ -52,7 +50,7 @@ pipeline {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: 'awscredentialsid') {
                     sh """
-                    # Validate EKS Cluster
+                    # Ensure EKS cluster exists before proceeding
                     if ! aws eks describe-cluster --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} --query "cluster.status" --output text | grep -q "ACTIVE"; then
                         echo "EKS Cluster ${EKS_CLUSTER_NAME} not found or not active!"
                         exit 1
@@ -61,19 +59,9 @@ pipeline {
                     # Update kubeconfig
                     aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
 
-                    # Validate Namespace
-                    if ! kubectl get namespace ${NAMESPACE} > /dev/null 2>&1; then
-                        echo "Namespace ${NAMESPACE} does not exist. Creating it..."
-                        kubectl create namespace ${NAMESPACE}
-                    fi
-
-                    # Validate Deployment YAML
-                    if ! kubectl apply --dry-run=client -f kubernetes/deployment.yaml; then
-                        echo "Deployment YAML is invalid!"
-                        exit 1
-                    fi
-
-                    echo "Validation successful. Proceeding to deployment..."
+                    # Validate Kubernetes manifests
+                    kubectl apply --dry-run=client -f kubernetes/deployment.yaml
+                    kubectl apply --dry-run=client -f kubernetes/service.yaml
                     """
                 }
             }
@@ -83,17 +71,20 @@ pipeline {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: 'awscredentialsid') {
                     sh """
-                    # Replace image in deployment.yaml
+                    # Ensure EKS cluster is ready
+                    aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
+
+                    # Replace image placeholder in deployment.yaml
                     export IMAGE_NAME="${DOCKER_HUB_REPO}:${BUILD_NUMBER}"
                     envsubst < kubernetes/deployment.yaml > kubernetes/deployment-updated.yaml
 
-                    # Apply Kubernetes Manifests
+                    # Deploy to EKS
                     kubectl apply -f kubernetes/namespace.yaml || echo 'Namespace already exists'
                     kubectl apply -f kubernetes/deployment-updated.yaml
                     kubectl apply -f kubernetes/service.yaml
 
-                    # Wait for Deployment to Rollout Successfully
-                    kubectl rollout status deployment/flask-app -n ${NAMESPACE} --timeout=120s
+                    # Restart deployment to apply the new image
+                    kubectl rollout restart deployment -n ${NAMESPACE}
                     """
                 }
             }
@@ -107,7 +98,6 @@ pipeline {
                     sh """
                     docker rmi -f ${DOCKER_HUB_REPO}:${BUILD_NUMBER} || true
                     docker rmi -f ${DOCKER_HUB_REPO}:latest || true
-                    docker image prune -af || true
                     """
                 } catch (Exception e) {
                     echo "Error during cleanup: ${e}"
