@@ -20,7 +20,10 @@ pipeline {
                 sh '''
                 set -e
                 python3 -m venv venv
-                /bin/bash -c "source venv/bin/activate && pip install -r requirements.txt && pytest || echo 'Tests failed but continuing deployment'"
+                source venv/bin/activate
+                pip install -r requirements.txt
+                pytest || echo "WARNING: Tests failed but proceeding with deployment."
+                deactivate
                 '''
             }
         }
@@ -41,6 +44,7 @@ pipeline {
                     echo ${DOCKER_HUB_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin
                     docker push ${DOCKER_HUB_REPO}:${BUILD_NUMBER}
                     docker push ${DOCKER_HUB_REPO}:latest
+                    docker logout
                     """
                 }
             }
@@ -51,8 +55,15 @@ pipeline {
                 withAWS(region: "${AWS_REGION}", credentials: 'awscredentialsid') {
                     sh """
                     aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
-                    sed -i 's|IMAGE_NAME_PLACEHOLDER|${DOCKER_HUB_REPO}:${BUILD_NUMBER}|g' kubernetes/deployment.yaml
-                    kubectl apply -f kubernetes/namespace.yaml || echo 'Namespace already exists'
+
+                    # Ensure namespace exists
+                    kubectl get namespace ${NAMESPACE} || kubectl create namespace ${NAMESPACE}
+
+                    # Replace image name in deployment.yaml
+                    sed -i "s|IMAGE_NAME_PLACEHOLDER|${DOCKER_HUB_REPO}:${BUILD_NUMBER}|g" kubernetes/deployment.yaml
+
+                    # Apply Kubernetes configurations
+                    kubectl apply -f kubernetes/namespace.yaml
                     kubectl apply -f kubernetes/deployment.yaml
                     kubectl apply -f kubernetes/service.yaml
                     """
@@ -68,6 +79,7 @@ pipeline {
                     sh """
                     docker rmi -f ${DOCKER_HUB_REPO}:${BUILD_NUMBER} || true
                     docker rmi -f ${DOCKER_HUB_REPO}:latest || true
+                    docker system prune -f || true
                     """
                 } catch (Exception e) {
                     echo "Error during cleanup: ${e}"
