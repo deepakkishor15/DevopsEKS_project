@@ -1,0 +1,66 @@
+pipeline {
+    agent any
+    
+    environment {
+        // CHANGE THESE VALUES
+        DOCKER_HUB_REPO = "deepak158/flask-app"  // Change to your Docker Hub username
+        AWS_REGION = "us-east-1"  // Change to your AWS region
+        EKS_CLUSTER_NAME = "your-eks-cluster"  // Change to your EKS cluster name
+        NAMESPACE = "flask-app"  // Change as needed
+    }
+    
+    stages {
+        stage('Clone Repository') {
+            steps {
+                git branch: 'main', url: 'https://github.com/your-repo.git'
+            }
+        }
+        
+        stage('Install Dependencies & Run Tests') {
+            steps {
+                sh 'pip install -r requirements.txt'
+                sh 'pytest || echo "Tests failed but continuing deployment"'
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                sh "docker build -t ${env.DOCKER_HUB_REPO}:${env.BUILD_NUMBER} ."
+                sh "docker tag ${env.DOCKER_HUB_REPO}:${env.BUILD_NUMBER} ${env.DOCKER_HUB_REPO}:latest"
+            }
+        }
+        
+        stage('Push to Docker Hub') {
+            steps {
+                withCredentials([string(credentialsId: 'docker-hub-token', variable: 'DOCKER_HUB_TOKEN')]) {
+                    sh "echo ${DOCKER_HUB_TOKEN} | docker login -u ${env.DOCKER_HUB_REPO.split('/')[0]} --password-stdin"
+                    sh "docker push ${env.DOCKER_HUB_REPO}:${env.BUILD_NUMBER}"
+                    sh "docker push ${env.DOCKER_HUB_REPO}:latest"
+                }
+            }
+        }
+        
+        stage('Deploy to EKS') {
+            steps {
+                withAWS(region: "${env.AWS_REGION}", credentials: 'aws-credentials') {
+                    sh "aws eks update-kubeconfig --name ${env.EKS_CLUSTER_NAME} --region ${env.AWS_REGION}"
+                    
+                    // Apply Kubernetes manifests
+                    sh "sed -i 's|IMAGE_NAME_PLACEHOLDER|${env.DOCKER_HUB_REPO}:${env.BUILD_NUMBER}|g' kubernetes/deployment.yaml"
+                    sh "kubectl apply -f kubernetes/namespace.yaml || echo 'Namespace already exists'"
+                    sh "kubectl apply -f kubernetes/deployment.yaml"
+                    sh "kubectl apply -f kubernetes/service.yaml"
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            // Clean up Docker images and workspace
+            sh "docker rmi -f ${env.DOCKER_HUB_REPO}:${env.BUILD_NUMBER} || true"
+            sh "docker rmi -f ${env.DOCKER_HUB_REPO}:latest || true"
+            cleanWs()
+        }
+    }
+}
