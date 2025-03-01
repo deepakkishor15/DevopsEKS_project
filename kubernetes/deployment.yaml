@@ -15,7 +15,7 @@ spec:
     spec:
       containers:
       - name: flask-app
-        image: IMAGE_NAME_PLACEHOLDER  # Replaced by Jenkins
+        image: deepak158/flask-app:latest  # Replaced by Jenkins
         ports:
         - containerPort: 5000
         livenessProbe:
