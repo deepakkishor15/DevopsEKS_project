@@ -32,9 +32,18 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(credentialsId: DOCKER_CREDENTIALS_ID, usernameVariable: 'DOCKER_USERNAME', passwordVariable: 'DOCKER_PASSWORD')]) {
                     sh '''#!/bin/bash
-                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin
-                        docker build -t $DOCKER_IMAGE:latest .
-                        docker push $DOCKER_IMAGE:latest
+                        set -x  # Print commands for debugging
+                        docker --version
+                        echo "Logging in to Docker Hub..."
+                        echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin || { echo "Docker login failed"; exit 1; }
+                        
+                        echo "Building Docker image..."
+                        docker build -t $DOCKER_IMAGE:latest . || { echo "Docker build failed"; exit 1; }
+                        
+                        echo "Pushing Docker image..."
+                        docker push $DOCKER_IMAGE:latest || { echo "Docker push failed"; exit 1; }
+                        
+                        echo "Docker build and push completed successfully"
                     '''
                 }
             }
@@ -44,10 +53,21 @@ pipeline {
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: AWS_CREDENTIALS_ID]]) {
                     sh '''#!/bin/bash
+                        set -x  # Print commands for debugging
+                        
+                        echo "Setting up Kubernetes configuration..."
                         export KUBECONFIG=$KUBECONFIG_FILE
-                        aws eks --region $AWS_REGION update-kubeconfig --name my-eks-cluster
-                        kubectl apply -f k8s/deployment.yaml
-                        kubectl apply -f k8s/service.yaml
+                        
+                        echo "Updating kubeconfig for EKS cluster..."
+                        aws eks --region $AWS_REGION update-kubeconfig --name my-eks-cluster || { echo "Failed to update kubeconfig"; exit 1; }
+                        
+                        echo "Applying Kubernetes deployment..."
+                        kubectl apply -f k8s/deployment.yaml || { echo "Failed to apply deployment"; exit 1; }
+                        
+                        echo "Applying Kubernetes service..."
+                        kubectl apply -f k8s/service.yaml || { echo "Failed to apply service"; exit 1; }
+                        
+                        echo "Kubernetes deployment completed successfully"
                     '''
                 }
             }
