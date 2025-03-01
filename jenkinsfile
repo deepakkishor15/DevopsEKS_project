@@ -2,10 +2,10 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_HUB_REPO = "deepak158/flask-app"  // Your Docker Hub repo
-        AWS_REGION = "us-west-2"  // Your AWS region
-        EKS_CLUSTER_NAME = "sample-EKS"  // Your EKS cluster name
-        NAMESPACE = "flask-app"  // Namespace in Kubernetes
+        DOCKER_HUB_REPO = "deepak158/flask-app"  // Change to your Docker Hub repo
+        AWS_REGION = "us-west-2"  // Update to your AWS region
+        EKS_CLUSTER_NAME = "sample-EKS"  // Updated to match your cluster
+        NAMESPACE = "flask-app"  // Change if needed
     }
 
     stages {
@@ -20,9 +20,7 @@ pipeline {
                 sh '''
                 set -e
                 python3 -m venv venv
-                source venv/bin/activate
-                pip install -r requirements.txt
-                pytest || echo "Tests failed, but continuing deployment..."
+                /bin/bash -c "source venv/bin/activate && pip install -r requirements.txt && pytest || echo 'Tests failed but continuing deployment'"
                 '''
             }
         }
@@ -52,26 +50,25 @@ pipeline {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: 'awscredentialsid') {
                     sh """
-                    # Ensure EKS cluster is active
-                    CLUSTER_STATUS=$(aws eks describe-cluster --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} --query "cluster.status" --output text || echo "NOT_FOUND")
-                    if [[ "$CLUSTER_STATUS" != "ACTIVE" ]]; then
-                        echo "ERROR: EKS Cluster ${EKS_CLUSTER_NAME} not found or not active!"
+                    # Ensure EKS cluster exists before proceeding
+                    if ! aws eks describe-cluster --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} --query "cluster.status" --output text | grep -q "ACTIVE"; then
+                        echo "EKS Cluster ${EKS_CLUSTER_NAME} not found or not active!"
                         exit 1
                     fi
 
                     # Update kubeconfig
                     aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
 
-                    # Replace image tag in deployment.yaml
+                    # Replace image placeholder in deployment.yaml
                     export IMAGE_NAME="${DOCKER_HUB_REPO}:${BUILD_NUMBER}"
                     envsubst < kubernetes/deployment.yaml > kubernetes/deployment-updated.yaml
 
-                    # Deploy to Kubernetes
-                    kubectl apply -f kubernetes/namespace.yaml || echo "Namespace already exists"
+                    # Deploy to EKS
+                    kubectl apply -f kubernetes/namespace.yaml || echo 'Namespace already exists'
                     kubectl apply -f kubernetes/deployment-updated.yaml
                     kubectl apply -f kubernetes/service.yaml
 
-                    # Restart deployment to apply new image
+                    # Restart deployment to apply the new image
                     kubectl rollout restart deployment -n ${NAMESPACE}
                     """
                 }
