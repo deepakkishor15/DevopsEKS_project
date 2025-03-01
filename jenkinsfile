@@ -4,7 +4,7 @@ pipeline {
     environment {
         DOCKER_HUB_REPO = "deepak158/flask-app"  // Change to your Docker Hub repo
         AWS_REGION = "us-west-2"  // Update to your AWS region
-        EKS_CLUSTER_NAME = "your-eks-cluster"  // Update to your EKS cluster name
+        EKS_CLUSTER_NAME = "deepak-eks-cluster"  // Updated cluster name
         NAMESPACE = "flask-app"  // Change if needed
     }
 
@@ -41,6 +41,30 @@ pipeline {
                     echo ${DOCKER_HUB_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin
                     docker push ${DOCKER_HUB_REPO}:${BUILD_NUMBER}
                     docker push ${DOCKER_HUB_REPO}:latest
+                    """
+                }
+            }
+        }
+
+        stage('Check eksctl Version') {
+            steps {
+                sh 'eksctl version'
+            }
+        }
+
+        stage('Create EKS Cluster') {
+            steps {
+                withAWS(region: "${AWS_REGION}", credentials: 'awscredentialsid') {
+                    sh """
+                    eksctl create cluster \
+                      --name ${EKS_CLUSTER_NAME} \
+                      --region ${AWS_REGION} \
+                      --nodegroup-name worker-nodes \
+                      --node-type t3.medium \
+                      --nodes 2 \
+                      --nodes-min 1 \
+                      --nodes-max 3 \
+                      --managed
                     """
                 }
             }
