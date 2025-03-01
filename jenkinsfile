@@ -1,58 +1,57 @@
 pipeline {
     agent any
-    
+
     environment {
-        DOCKER_HUB_REPO = "deepak158/flask-app"
-        AWS_REGION = "us-east-1"
-        EKS_CLUSTER_NAME = "your-eks-cluster"
-        NAMESPACE = "flask-app"
+        DOCKER_HUB_REPO = "deepak158/flask-app"  // Change to your Docker Hub repo
+        AWS_REGION = "us-east-1"  // Update to your AWS region
+        EKS_CLUSTER_NAME = "your-eks-cluster"  // Update to your EKS cluster name
+        NAMESPACE = "flask-app"  // Change if needed
     }
-    
+
     stages {
         stage('Clone Repository') {
             steps {
                 git branch: 'main', url: 'https://github.com/deepakkishor15/DevopsEKS_project.git'
             }
         }
-        
+
         stage('Install Dependencies & Run Tests') {
             steps {
                 sh '''
+                set -e
                 python3 -m venv venv
-                source venv/bin/activate
-                pip install -r requirements.txt
-                pytest || echo "Tests failed but continuing deployment"
+                /bin/bash -c "source venv/bin/activate && pip install -r requirements.txt && pytest || echo 'Tests failed but continuing deployment'"
                 '''
             }
         }
-        
+
         stage('Build Docker Image') {
             steps {
                 sh """
-                docker build -t ${DOCKER_HUB_REPO}:${env.BUILD_NUMBER} .
-                docker tag ${DOCKER_HUB_REPO}:${env.BUILD_NUMBER} ${DOCKER_HUB_REPO}:latest
+                docker build -t ${DOCKER_HUB_REPO}:${BUILD_NUMBER} .
+                docker tag ${DOCKER_HUB_REPO}:${BUILD_NUMBER} ${DOCKER_HUB_REPO}:latest
                 """
             }
         }
-        
+
         stage('Push to Docker Hub') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'docker-hub-token', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-token', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_HUB_TOKEN')]) {
                     sh """
-                    echo ${DOCKER_PASS} | docker login -u ${DOCKER_USER} --password-stdin
-                    docker push ${DOCKER_HUB_REPO}:${env.BUILD_NUMBER}
+                    echo ${DOCKER_HUB_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin
+                    docker push ${DOCKER_HUB_REPO}:${BUILD_NUMBER}
                     docker push ${DOCKER_HUB_REPO}:latest
                     """
                 }
             }
         }
-        
+
         stage('Deploy to EKS') {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: 'aws-credentials') {
                     sh """
                     aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
-                    sed -i 's|IMAGE_NAME_PLACEHOLDER|${DOCKER_HUB_REPO}:${env.BUILD_NUMBER}|g' kubernetes/deployment.yaml
+                    sed -i 's|IMAGE_NAME_PLACEHOLDER|${DOCKER_HUB_REPO}:${BUILD_NUMBER}|g' kubernetes/deployment.yaml
                     kubectl apply -f kubernetes/namespace.yaml || echo 'Namespace already exists'
                     kubectl apply -f kubernetes/deployment.yaml
                     kubectl apply -f kubernetes/service.yaml
@@ -61,11 +60,11 @@ pipeline {
             }
         }
     }
-    
+
     post {
         always {
             sh """
-            docker rmi -f ${DOCKER_HUB_REPO}:${env.BUILD_NUMBER} || true
+            docker rmi -f ${DOCKER_HUB_REPO}:${BUILD_NUMBER} || true
             docker rmi -f ${DOCKER_HUB_REPO}:latest || true
             cleanWs()
             """
