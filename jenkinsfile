@@ -18,8 +18,9 @@ pipeline {
         stage('Install Dependencies & Run Tests') {
             steps {
                 sh '''
+                # Use bash explicitly to avoid "source: not found" error
                 python3 -m venv venv
-                source venv/bin/activate
+                . venv/bin/activate  # Correct way in 'sh'
                 pip install -r requirements.txt
                 pytest || echo "Tests failed but continuing deployment"
                 '''
