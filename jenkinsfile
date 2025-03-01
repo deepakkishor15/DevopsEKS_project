@@ -2,13 +2,20 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_HUB_REPO = "deepak158/flask-app"  // Change to your Docker Hub repo
-        AWS_REGION = "us-west-2"  // Update to your AWS region
-        EKS_CLUSTER_NAME = "sample-EKS"  // Updated to match your cluster
-        NAMESPACE = "flask-app"  // Change if needed
+        DOCKER_HUB_REPO = "deepak158/flask-app"  // Update your Docker Hub repo
+        AWS_REGION = "us-west-2"  // Update your AWS region
+        EKS_CLUSTER_NAME = "sample-EKS"  // Update to match your EKS cluster
+        NAMESPACE = "flask-app"  // Change namespace if needed
+        KUBECONFIG_PATH = "/home/ubuntu/config"  // Ensure the kubeconfig path is correct
     }
 
     stages {
+        stage('Cleanup Workspace') {
+            steps {
+                cleanWs()
+            }
+        }
+
         stage('Clone Repository') {
             steps {
                 git branch: 'main', url: 'https://github.com/deepakkishor15/DevopsEKS_project.git'
@@ -20,7 +27,9 @@ pipeline {
                 sh '''
                 set -e
                 python3 -m venv venv
-                /bin/bash -c "source venv/bin/activate && pip install -r requirements.txt && pytest || exit 1"
+                source venv/bin/activate
+                pip install -r requirements.txt
+                pytest
                 '''
             }
         }
@@ -41,6 +50,7 @@ pipeline {
                     echo ${DOCKER_HUB_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin
                     docker push ${DOCKER_HUB_REPO}:${BUILD_NUMBER}
                     docker push ${DOCKER_HUB_REPO}:latest
+                    docker logout
                     """
                 }
             }
@@ -50,16 +60,16 @@ pipeline {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: 'awscredentialsid') {
                     sh """
-                    # Ensure EKS cluster exists before proceeding
+                    echo "Checking EKS Cluster Status..."
                     if ! aws eks describe-cluster --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} --query "cluster.status" --output text | grep -q "ACTIVE"; then
-                        echo "EKS Cluster ${EKS_CLUSTER_NAME} not found or not active!"
+                        echo "EKS Cluster ${EKS_CLUSTER_NAME} is not active!"
                         exit 1
                     fi
 
-                    # Update kubeconfig
+                    echo "Updating kubeconfig..."
                     aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
 
-                    # Validate Kubernetes manifests
+                    echo "Validating Kubernetes manifests..."
                     kubectl apply --dry-run=client -f kubernetes/deployment.yaml
                     kubectl apply --dry-run=client -f kubernetes/service.yaml
                     """
@@ -70,40 +80,4 @@ pipeline {
         stage('Deploy to EKS') {
             steps {
                 withAWS(region: "${AWS_REGION}", credentials: 'awscredentialsid') {
-                    sh """
-                    # Ensure EKS cluster is ready
-                    aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
-
-                    # Replace image placeholder in deployment.yaml
-                    export IMAGE_NAME="${DOCKER_HUB_REPO}:${BUILD_NUMBER}"
-                    envsubst < kubernetes/deployment.yaml > kubernetes/deployment-updated.yaml
-
-                    # Deploy to EKS
-                    kubectl apply -f kubernetes/namespace.yaml || echo 'Namespace already exists'
-                    kubectl apply -f kubernetes/deployment-updated.yaml
-                    kubectl apply -f kubernetes/service.yaml
-
-                    # Restart deployment to apply the new image
-                    kubectl rollout restart deployment -n ${NAMESPACE}
-                    """
-                }
-            }
-        }
-    }
-
-    post {
-        always {
-            script {
-                try {
-                    sh """
-                    docker rmi -f ${DOCKER_HUB_REPO}:${BUILD_NUMBER} || true
-                    docker rmi -f ${DOCKER_HUB_REPO}:latest || true
-                    """
-                } catch (Exception e) {
-                    echo "Error during cleanup: ${e}"
-                }
-            }
-            cleanWs()
-        }
-    }
-}
+        
