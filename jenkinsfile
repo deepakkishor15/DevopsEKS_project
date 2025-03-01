@@ -3,19 +3,11 @@ pipeline {
 
     environment {
         DOCKER_HUB_REPO = "deepak158/flask-app"
-        AWS_REGION = "us-west-2"
-        EKS_CLUSTER_NAME = "sample-EKS"
+        KUBECONFIG = "/home/ubuntu/.kube/config"
         NAMESPACE = "flask-app"
-        KUBECONFIG_PATH = "/home/ubuntu/config"
     }
 
     stages {
-        stage('Cleanup Workspace') {
-            steps {
-                cleanWs()
-            }
-        }
-
         stage('Clone Repository') {
             steps {
                 git branch: 'main', url: 'https://github.com/deepakkishor15/DevopsEKS_project.git'
@@ -34,89 +26,37 @@ pipeline {
             }
         }
 
-        stage('Build Docker Image') {
-            steps {
-                sh """
-                docker build -t ${DOCKER_HUB_REPO}:${BUILD_NUMBER} .
-                docker tag ${DOCKER_HUB_REPO}:${BUILD_NUMBER} ${DOCKER_HUB_REPO}:latest
-                """
-            }
-        }
-
-        stage('Push to Docker Hub') {
+        stage('Build & Push Docker Image') {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'docker-credentialsid', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_HUB_TOKEN')]) {
-                    sh """
+                    sh '''
+                    docker build -t ${DOCKER_HUB_REPO}:${BUILD_NUMBER} .
+                    docker tag ${DOCKER_HUB_REPO}:${BUILD_NUMBER} ${DOCKER_HUB_REPO}:latest
                     echo ${DOCKER_HUB_TOKEN} | docker login -u ${DOCKER_USER} --password-stdin
                     docker push ${DOCKER_HUB_REPO}:${BUILD_NUMBER}
                     docker push ${DOCKER_HUB_REPO}:latest
-                    docker logout
-                    """
+                    '''
                 }
             }
         }
 
-        stage('Validate Kubernetes Cluster & Manifests') {
+        stage('Deploy to Kubernetes') {
             steps {
-                withAWS(region: "${AWS_REGION}", credentials: 'awscredentialsid') {
-                    sh """
-                    echo "Checking EKS Cluster Status..."
-                    CLUSTER_STATUS=$(aws eks describe-cluster --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION} --query "cluster.status" --output text || echo "ERROR")
-                    if [[ "$CLUSTER_STATUS" != "ACTIVE" ]]; then
-                        echo "EKS Cluster ${EKS_CLUSTER_NAME} is not active!"
-                        exit 1
-                    fi
+                sh '''
+                echo "Applying Kubernetes manifests..."
+                kubectl apply -f kubernetes/namespace.yaml || echo "Namespace already exists"
+                kubectl apply -f kubernetes/deployment.yaml
+                kubectl apply -f kubernetes/service.yaml
 
-                    echo "Updating kubeconfig..."
-                    aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
-
-                    echo "Validating Kubernetes manifests..."
-                    kubectl apply --dry-run=client -f kubernetes/deployment.yaml
-                    kubectl apply --dry-run=client -f kubernetes/service.yaml
-                    """
-                }
-            }
-        }
-
-        stage('Deploy to EKS') {
-            steps {
-                withAWS(region: "${AWS_REGION}", credentials: 'awscredentialsid') {
-                    sh """
-                    echo "Updating kubeconfig..."
-                    aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
-
-                    echo "Replacing image in deployment.yaml..."
-                    export IMAGE_NAME="${DOCKER_HUB_REPO}:${BUILD_NUMBER}"
-                    envsubst < kubernetes/deployment.yaml > kubernetes/deployment-updated.yaml
-
-                    echo "Applying Kubernetes manifests..."
-                    kubectl apply -f kubernetes/namespace.yaml || echo 'Namespace already exists'
-                    kubectl apply -f kubernetes/deployment-updated.yaml
-                    kubectl apply -f kubernetes/service.yaml
-
-                    echo "Restarting deployment to apply new image..."
-                    kubectl rollout restart deployment -n ${NAMESPACE}
-
-                    echo "Deployment successful!"
-                    """
-                }
+                echo "Restarting deployment..."
+                kubectl rollout restart deployment -n ${NAMESPACE}
+                '''
             }
         }
     }
 
     post {
         always {
-            script {
-                try {
-                    sh """
-                    echo "Cleaning up Docker images..."
-                    docker rmi -f ${DOCKER_HUB_REPO}:${BUILD_NUMBER} || true
-                    docker rmi -f ${DOCKER_HUB_REPO}:latest || true
-                    """
-                } catch (Exception e) {
-                    echo "Error during cleanup: ${e}"
-                }
-            }
             cleanWs()
         }
     }
